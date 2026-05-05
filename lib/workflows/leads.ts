@@ -1,123 +1,118 @@
-import { runAgent } from "@/lib/ai/runAgent";
-import "@/lib/ai/registry.bootstrap";
+import { SYSTEM_ACTOR } from "@/lib/auth/types";
 import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
-import { approvalService } from "@/lib/services/approvalService";
 import {
-  automationService,
   WORKFLOW_STEPS,
+  automationService,
 } from "@/lib/services/automationService";
+import { leadScoringService } from "@/lib/services/leadScoringService";
 import { leadService } from "@/lib/services/leadService";
-import { SYSTEM_ACTOR } from "@/lib/auth/types";
 
 /**
  * Lead workflow:
- *   lead.created → leadScoring agent → set score on lead
- *                                    → if requires approval, create one + wait
- *                                    → emit lead.qualified when score ≥ threshold
  *
- * Each step is named, idempotent, and short.
+ *   lead.created
+ *     → check automation mode for lead.scoring
+ *     → leadScoringService.runForLead (handles APPLY vs APPROVAL routing)
+ *     → if approval was raised: wait for approval.approved with that ID (7d timeout)
+ *     → re-load the lead (its score may have just been applied via approval)
+ *     → if score >= 70, emit lead.qualified
+ *
+ * Each step is named, idempotent, and short. Heavy work (LLM call, DB writes)
+ * happens inside step.run, so retries hit the durable Inngest checkpoint
+ * rather than rerunning the whole function.
  */
+
+const LEAD_QUALIFIED_THRESHOLD = 70;
+
 export const onLeadCreated = inngest.createFunction(
   { id: "on-lead-created", retries: 3 },
   { event: "lead.created" },
   async ({ event, step }) => {
-    const lead = await step.run("load-lead", () =>
-      leadService.getOrThrow(event.data.leadId),
-    );
+    const leadId = event.data.leadId;
 
-    // The system "owns" workflow runs in MVP; per-user automation modes are
-    // checked against a known operator id once auth is wired.
-    const mode = await step.run("load-automation-mode", () =>
+    // Workflow runs as SYSTEM. The per-user automation prefs page only
+    // affects manually-clicked Run buttons. Workflow-initiated scoring
+    // honours the system-default mode (DRAFT_ONLY today). When we add a
+    // team-level pref later, swap getMode("system", ...) for getSystemMode().
+    const mode = await step.run("load-system-automation-mode", () =>
       automationService.getMode(SYSTEM_ACTOR.id, WORKFLOW_STEPS.lead.scoring),
     );
 
     if (mode === "MANUAL") {
-      logger.info({ leadId: lead.id }, "Lead scoring set to MANUAL — skipping");
+      logger.info({ leadId }, "lead.scoring is MANUAL — workflow skipped");
       return { status: "skipped", reason: "manual_mode" };
     }
 
-    const result = await step.run("run-lead-scoring-agent", () =>
-      runAgent<
-        unknown,
-        {
-          score: number;
-          riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-          riskFlags: string[];
-          reasoning: string;
-          confidence: number;
-          requiresHumanApproval: boolean;
-        }
-      >({
-        agentName: "leadScoring",
-        input: {
-          parentName: lead.parentName,
-          parentEmail: lead.parentEmail,
-          parentPhone: lead.parentPhone,
-          studentGrade: lead.studentGrade,
-          subjectNeeded: lead.subjectNeeded,
-          message: lead.message,
-          source: lead.source,
-        },
-        context: {
-          actor: SYSTEM_ACTOR,
-          triggerSource: "workflow",
-          entityType: "Lead",
-          entityId: lead.id,
-        },
-      }),
+    // Delegate to the same service the lead detail page uses. This is the
+    // single source of truth for the score-or-approval routing.
+    const result = await step.run("run-lead-scoring", () =>
+      leadScoringService.runForLead({ leadId, actor: SYSTEM_ACTOR }),
     );
 
-    if (!result.output) {
-      return { status: "failed", reason: "no_output" };
+    // APPLY path — the score is already on the lead row.
+    if (result.decision.kind === "APPLY") {
+      const score = result.decision.payload.score;
+      if (score >= LEAD_QUALIFIED_THRESHOLD) {
+        await step.sendEvent("emit-lead-qualified", {
+          name: "lead.qualified",
+          data: { leadId, score },
+        });
+      }
+      return {
+        status: "completed",
+        path: "auto_applied",
+        agentRunId: result.agentRun.agentRunId,
+        score,
+      };
     }
 
-    await step.run("apply-lead-score", () =>
-      leadService.setScore({
-        leadId: lead.id,
-        score: result.output!.score,
-        riskLevel: result.output!.riskLevel,
-        riskFlags: result.output!.riskFlags,
-        reasoning: result.output!.reasoning,
-        actor: SYSTEM_ACTOR,
-        agentRunId: result.agentRunId,
-      }),
-    );
+    // APPROVAL path — score NOT yet on the lead. Wait for the human.
+    if (result.decision.kind === "APPROVAL" && result.approval) {
+      const approvalId = result.approval.id;
 
-    if (result.requiresApproval) {
-      const approval = await step.run("create-approval", () =>
-        approvalService.create(
-          {
-            agentRunId: result.agentRunId,
-            title: `Confirm lead score for ${lead.parentName}`,
-            description: result.output!.reasoning,
-            entityType: "Lead",
-            entityId: lead.id,
-            proposedAction: "lead.confirmScore",
-            proposedPayload: result.output,
-            currentState: { score: lead.score, status: lead.status },
-            riskLevel: result.output!.riskLevel,
-          },
-          { actor: SYSTEM_ACTOR },
-        ),
-      );
-
-      const approved = await step.waitForEvent("wait-for-approval", {
+      const approvedEvent = await step.waitForEvent("wait-for-approval", {
         event: "approval.approved",
         timeout: "7d",
-        if: `event.data.approvalId == "${approval.id}"`,
+        if: `event.data.approvalId == "${approvalId}"`,
       });
 
-      if (!approved) return { status: "approval_timeout" };
+      if (!approvedEvent) {
+        logger.warn(
+          { leadId, approvalId },
+          "Lead-scoring approval timed out after 7d",
+        );
+        return { status: "approval_timeout", approvalId };
+      }
+
+      // Score has been applied by approvalService → leadScoringService.
+      // Re-load to get the freshly-applied score.
+      const updated = await step.run("reload-lead-after-approval", () =>
+        leadService.getOrThrow(leadId),
+      );
+
+      if (updated.score != null && updated.score >= LEAD_QUALIFIED_THRESHOLD) {
+        await step.sendEvent("emit-lead-qualified", {
+          name: "lead.qualified",
+          data: { leadId, score: updated.score },
+        });
+      }
+
+      return {
+        status: "completed",
+        path: "approved_by_human",
+        agentRunId: result.agentRun.agentRunId,
+        approvalId,
+        score: updated.score,
+      };
     }
 
-    if (result.output.score >= 70) {
-      await step.sendEvent("emit-lead-qualified", {
-        name: "lead.qualified",
-        data: { leadId: lead.id, score: result.output.score },
-      });
-    }
-
-    return { status: "completed", agentRunId: result.agentRunId };
+    // Defensive — leadScoringService.runForLead throws on BLOCKED_MANUAL,
+    // which we already short-circuited above. Anything else is a bug.
+    logger.error(
+      { leadId, decision: result.decision.kind },
+      "Unexpected leadScoring decision in workflow",
+    );
+    return { status: "unexpected_decision", kind: result.decision.kind };
   },
 );

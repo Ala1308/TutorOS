@@ -1153,10 +1153,12 @@ interface VoiceProviderAdapter {
 ### Provider Selection
 
 - `VOICE_PROVIDER` selects the active provider.
-- Valid values: `none`, `vapi`, `elevenlabs`, `bland`, `retell`,
+- Valid values: `none`, `mock`, `vapi`, `elevenlabs`, `bland`, `retell`,
   `synthflow`, `lindy`.
 - `none` shows "voice provider not configured" UI and keeps manual flows
   working.
+- `mock` keeps calls in memory (dev/tests only). Set `VOICE_MOCK_WEBHOOK_SECRET`
+  and send it as header `x-signature` on webhook POSTs.
 
 ### Webhooks
 

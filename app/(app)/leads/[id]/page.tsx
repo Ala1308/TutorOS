@@ -7,10 +7,15 @@ import { RiskBadge, StatusBadge } from "@/components/common/StatusBadge";
 import { ApprovalCard } from "@/components/agents/ApprovalCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { agentRunService } from "@/lib/services/agentRunService";
 import { approvalService } from "@/lib/services/approvalService";
 import { auditService } from "@/lib/services/auditService";
 import { leadService } from "@/lib/services/leadService";
-import { formatDateTime } from "@/lib/utils/dates";
+import { formatDateTime, formatRelative } from "@/lib/utils/dates";
+import { formatMoney } from "@/lib/utils/money";
+
+import { ApprovalCardActions } from "../../approvals/ApprovalCardActions";
+import { RunScoringButton } from "./RunScoringButton";
 
 export const dynamic = "force-dynamic";
 
@@ -33,10 +38,13 @@ export default async function LeadDetailPage({
   const lead = await leadService.get(id);
   if (!lead) notFound();
 
-  const [approvals, audit] = await Promise.all([
+  const [approvals, audit, latestRun] = await Promise.all([
     approvalService.listForEntity("Lead", lead.id),
     auditService.listForEntity("Lead", lead.id, 25),
+    agentRunService.latestForEntity("Lead", lead.id, "leadScoring"),
   ]);
+
+  const hasPendingApproval = approvals.some((a) => a.status === "PENDING");
 
   return (
     <>
@@ -71,8 +79,12 @@ export default async function LeadDetailPage({
           </Card>
 
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-start justify-between gap-4">
               <CardTitle>Triage</CardTitle>
+              <RunScoringButton
+                leadId={lead.id}
+                hasPendingApproval={hasPendingApproval}
+              />
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <Row
@@ -92,6 +104,41 @@ export default async function LeadDetailPage({
               {lead.scoringReasoning ? (
                 <p className="text-muted-foreground">{lead.scoringReasoning}</p>
               ) : null}
+              {latestRun ? (
+                <>
+                  <Separator className="my-2" />
+                  <div className="grid grid-cols-2 gap-y-1 text-xs text-muted-foreground">
+                    <span>Latest run</span>
+                    <span className="text-right font-medium text-foreground">
+                      <StatusBadge status={latestRun.status} />
+                    </span>
+                    <span>Started</span>
+                    <span className="text-right">
+                      {formatRelative(latestRun.startedAt)}
+                    </span>
+                    <span>Confidence</span>
+                    <span className="text-right">
+                      {latestRun.confidence == null
+                        ? "—"
+                        : (latestRun.confidence / 100).toFixed(2)}
+                    </span>
+                    <span>Cost</span>
+                    <span className="text-right">
+                      {latestRun.costCents == null
+                        ? "—"
+                        : formatMoney(latestRun.costCents, "USD", "en-US")}
+                    </span>
+                    {latestRun.error ? (
+                      <>
+                        <span>Error</span>
+                        <span className="col-span-2 text-right text-destructive">
+                          {latestRun.error}
+                        </span>
+                      </>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -100,9 +147,13 @@ export default async function LeadDetailPage({
               <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 Approvals
               </h2>
-              {approvals.map((a) => (
-                <ApprovalCard key={a.id} approval={a} />
-              ))}
+              {approvals.map((a) =>
+                a.status === "PENDING" ? (
+                  <ApprovalCardActions key={a.id} approval={a} />
+                ) : (
+                  <ApprovalCard key={a.id} approval={a} />
+                ),
+              )}
             </div>
           ) : null}
         </div>

@@ -6,5 +6,11 @@
  * once at the module level (services do this transitively).
  */
 
+import "./tools/drive";
 import "./tools/lead";
+import "./tools/people";
+import "./tools/sessions";
+import "./tools/academics";
+import "./tools/invoices";
+import "./tools/comms";
 import "./agents/leadScoring";

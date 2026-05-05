@@ -1,12 +1,17 @@
 import { logger } from "@/lib/logger";
 import { ForbiddenError, ValidationError } from "@/lib/utils/errors";
 
-import type { ToolContext, ToolDefinition } from "./types";
+import type {
+  ToolApprovalRequired,
+  ToolContext,
+  ToolDefinition,
+} from "./types";
 
 /**
  * Central registry of every tool. Agents may invoke only tools listed in
  * their `allowedTools`. Use `runTool` to execute — it validates input,
- * enforces permissions, and writes the audit row.
+ * enforces permissions, gates medium/high tools through automation +
+ * approvals, and writes the audit row.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,15 +38,42 @@ export function listTools(): ToolDefinition<unknown, unknown>[] {
 }
 
 /**
- * Single execution path for tools. Validates input, checks roles and risk,
- * runs the handler, writes audit. Approval gating for `medium` / `high`
- * tools is delegated to the calling agent / workflow via the approvalService.
+ * `runTool` returns either the validated tool output or an
+ * `ToolApprovalRequired` envelope when the call was deferred to a human.
+ * Agents must check `__status === "approval_required"` before treating the
+ * value as the tool's normal output.
+ */
+export type RunToolResult<TOutput> = TOutput | ToolApprovalRequired;
+
+export function isApprovalRequired(v: unknown): v is ToolApprovalRequired {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    (v as { __status?: unknown }).__status === "approval_required"
+  );
+}
+
+/**
+ * Single execution path for tools.
+ *
+ * Order of checks (per CONTRIBUTING §13 "Tool Execution Flow"):
+ *   1. Validate input.
+ *   2. Check actor permissions.
+ *   3. Check automation mode for medium/high tools.
+ *   4. Create approval if needed.
+ *   5. Execute handler if allowed.
+ *   6. Audit the action.
+ *   7. Return structured result.
+ *
+ * Read-only / low-risk tools skip the automation + approval steps. Human
+ * users (`actor.type === "USER"`) also bypass the gate — operators acting
+ * directly through the UI are the approval, not the proposer.
  */
 export async function runTool<TInput, TOutput>(
   name: string,
   input: TInput,
   ctx: ToolContext,
-): Promise<TOutput> {
+): Promise<RunToolResult<TOutput>> {
   const tool = getTool(name) as ToolDefinition<TInput, TOutput>;
 
   const parseResult = tool.inputSchema.safeParse(input);
@@ -51,6 +83,7 @@ export async function runTool<TInput, TOutput>(
       parseResult.error.flatten(),
     );
   }
+  const validated = parseResult.data;
 
   const allowed =
     ctx.actor.type === "SYSTEM" ||
@@ -61,13 +94,20 @@ export async function runTool<TInput, TOutput>(
     throw new ForbiddenError(`Actor cannot run tool ${name}`);
   }
 
+  const needsGate =
+    (tool.category === "medium" || tool.category === "high") &&
+    ctx.actor.type === "AGENT";
+
+  if (needsGate) {
+    const gateResult = await applyAutomationGate(tool, validated, ctx);
+    if (gateResult) return gateResult as RunToolResult<TOutput>;
+  }
+
   const start = Date.now();
   try {
-    const result = await tool.handler(parseResult.data, ctx);
-    const validated = tool.outputSchema.parse(result);
+    const result = await tool.handler(validated, ctx);
+    const out = tool.outputSchema.parse(result);
 
-    // Audit. Imported lazily because services depend on the auth/db chain that
-    // might not be desired in pure-function imports of this registry.
     const { auditService } = await import("@/lib/services/auditService");
     await auditService.logAuditEvent({
       actorType: ctx.actor.type,
@@ -83,9 +123,90 @@ export async function runTool<TInput, TOutput>(
       },
     });
 
-    return validated;
+    return out;
   } catch (err) {
     logger.error({ err, tool: name }, "Tool execution failed");
     throw err;
   }
+}
+
+/**
+ * Reads the operator's automation preference for the tool's workflow step
+ * and either:
+ *   - allows immediate execution (FULL_AUTO),
+ *   - creates a PENDING approval and returns a deferred result, or
+ *   - throws when the operator has set MANUAL.
+ *
+ * `DRAFT_ONLY` is treated as approval-required for tool calls because the
+ * tool surface is the action surface — the "draft" lives in the approval
+ * payload until the human resolves it.
+ */
+async function applyAutomationGate<TInput>(
+  tool: ToolDefinition<TInput, unknown>,
+  validated: TInput,
+  ctx: ToolContext,
+): Promise<ToolApprovalRequired | null> {
+  if (!tool.workflowStep) {
+    return null;
+  }
+
+  const operatorUserId = ctx.googleOAuthUserId;
+  if (!operatorUserId) {
+    throw new ForbiddenError(
+      `Tool ${tool.name} requires an operator user id (ctx.googleOAuthUserId) to consult automation preferences.`,
+    );
+  }
+
+  const { automationService } =
+    await import("@/lib/services/automationService");
+  const mode = await automationService.getMode(
+    operatorUserId,
+    tool.workflowStep,
+  );
+
+  if (mode === "FULL_AUTO") {
+    if (tool.category === "high") {
+      throw new ForbiddenError(
+        `Tool ${tool.name} is category=high and cannot run as FULL_AUTO.`,
+      );
+    }
+    return null;
+  }
+
+  if (mode === "MANUAL") {
+    throw new ForbiddenError(
+      `Tool ${tool.name} is set to MANUAL for ${tool.workflowStep}. Operator must take this action directly.`,
+    );
+  }
+
+  const card = tool.buildApprovalDescription
+    ? tool.buildApprovalDescription(validated)
+    : {
+        title: `Approve ${tool.name}`,
+        description: `Agent proposed running ${tool.name}.`,
+        entityType: "Tool",
+        entityId: tool.name,
+      };
+
+  const { approvalService } = await import("@/lib/services/approvalService");
+  const approval = await approvalService.create(
+    {
+      ...(ctx.agentRunId ? { agentRunId: ctx.agentRunId } : {}),
+      title: card.title,
+      description: card.description,
+      entityType: card.entityType,
+      entityId: card.entityId,
+      proposedAction: tool.name,
+      proposedPayload: validated as unknown,
+      riskLevel: tool.riskLevel,
+    },
+    { actor: ctx.actor },
+  );
+
+  return {
+    __status: "approval_required",
+    approvalId: approval.id,
+    workflowStep: tool.workflowStep,
+    riskLevel: tool.riskLevel,
+  };
 }

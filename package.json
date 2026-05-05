@@ -25,7 +25,7 @@
     "seed:owner": "tsx scripts/seed-owner.ts",
     "dev:magic-link": "tsx scripts/dev-magic-link.ts",
     "dev:test-email": "tsx scripts/test-email.ts",
-    "inngest:dev": "inngest-cli dev"
+    "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.0",
@@ -79,6 +79,7 @@
     "tinyglobby": "^0.2.16",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
+    "vite": "^5.4.21",
     "vitest": "^2.1.5"
   }
 }

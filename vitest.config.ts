@@ -23,6 +23,14 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./", import.meta.url)),
+      // `server-only` is injected by the Next.js bundler at build time; in
+      // node/test runs it has nothing to resolve to, so we point it at an
+      // empty stub. This keeps server-only enforcement at build time
+      // (where it matters) without breaking unit tests that import service
+      // modules whose only client-vs-server protection is that import.
+      "server-only": fileURLToPath(
+        new URL("./tests/stubs/server-only.ts", import.meta.url),
+      ),
     },
   },
 });

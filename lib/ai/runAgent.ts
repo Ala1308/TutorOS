@@ -4,16 +4,25 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentRuns } from "@/lib/db/schema";
 import { logger } from "@/lib/logger";
+import { agentSettingsService } from "@/lib/services/agentSettingsService";
+import { knowledgeService } from "@/lib/services/knowledgeService";
+import { orgProfileService } from "@/lib/services/orgProfileService";
 import { AgentExecutionError, ValidationError } from "@/lib/utils/errors";
 import { newId } from "@/lib/utils/ids";
 
 import { checkBudget } from "./budget";
 import { resolveModel } from "./client";
+import { composeSystemPrompt } from "./promptComposer";
 import { getAgent } from "./registry";
 import { baseAgentOutput } from "./schemas/_base";
 import { traced } from "./traced";
 
-import type { AgentRunContext, AgentRunResult, RiskLevel } from "./types";
+import type {
+  AgentRunContext,
+  AgentRunResult,
+  ModelChoice,
+  RiskLevel,
+} from "./types";
 
 /**
  * Single entry point for any agent execution.
@@ -52,6 +61,16 @@ export async function runAgent<TInput, TOutput>(args: {
     );
   }
 
+  // Per-agent overrides from agent_settings + org profile + knowledge docs.
+  // Failures here are non-fatal — log and fall back to in-code defaults.
+  const overrides = await loadOverrides(def.name);
+  if (!overrides.enabled) {
+    throw new AgentExecutionError(
+      def.name,
+      "Agent is disabled in settings (Settings → Agents).",
+    );
+  }
+
   // 3. Cost cap
   const budgetCheck = await checkBudget(def.name);
   if (!budgetCheck.allowed) {
@@ -61,11 +80,29 @@ export async function runAgent<TInput, TOutput>(args: {
     );
   }
 
+  const modelChoice: ModelChoice = {
+    provider: overrides.modelProvider ?? def.model.provider,
+    model: overrides.modelName ?? def.model.model,
+  };
+  const effectiveTimeoutMs = overrides.timeoutMs ?? def.timeoutMs;
+  const effectiveConfidenceThreshold =
+    overrides.confidenceThreshold ?? def.confidenceThreshold;
+  const effectiveMaxRiskLevel = overrides.maxRiskLevel ?? def.maxRiskLevel;
+  const effectiveVersion = def.version + (overrides.promptVersion - 1);
+
+  const systemPrompt = composeSystemPrompt({
+    agentName: def.name,
+    inCodeSystemPrompt: def.systemPrompt,
+    override: overrides.systemPromptOverride,
+    orgProfile: overrides.orgProfile,
+    knowledge: overrides.knowledge,
+  });
+
   // 4. Insert RUNNING row
   await db.insert(agentRuns).values({
     id: agentRunId,
     agentName: def.name,
-    agentVersion: def.version,
+    agentVersion: effectiveVersion,
     workflowStep: def.workflowStep,
     triggerSource: args.context.triggerSource,
     ...(args.context.parentRunId
@@ -77,20 +114,20 @@ export async function runAgent<TInput, TOutput>(args: {
     ...(args.context.entityId ? { entityId: args.context.entityId } : {}),
     status: "RUNNING",
     input: inputResult.data as unknown,
-    modelProvider: def.model.provider,
-    modelName: def.model.model,
+    modelProvider: modelChoice.provider,
+    modelName: modelChoice.model,
   });
 
   try {
     // 5+6+7. Trace + structured generation
-    const model = resolveModel(def.model);
+    const model = resolveModel(modelChoice);
 
     // The agent output schema must extend baseAgentOutput; we validate twice
     // (once for the universal contract, once for the agent-specific one).
     const tracedResult = await traced(
       {
         agentName: def.name,
-        agentVersion: def.version,
+        agentVersion: effectiveVersion,
         agentRunId,
         workflowStep: def.workflowStep,
         actorType: args.context.actor.type,
@@ -104,11 +141,14 @@ export async function runAgent<TInput, TOutput>(args: {
       async () => {
         const { object, usage } = await generateObject({
           model,
-          system: def.systemPrompt,
+          system: systemPrompt,
           prompt: JSON.stringify(inputResult.data),
           schema: def.outputSchema,
+          ...(overrides.temperature !== null
+            ? { temperature: overrides.temperature }
+            : {}),
           maxRetries: 1,
-          abortSignal: AbortSignal.timeout(def.timeoutMs),
+          abortSignal: AbortSignal.timeout(effectiveTimeoutMs),
         });
         return {
           output: object as TOutput,
@@ -116,7 +156,7 @@ export async function runAgent<TInput, TOutput>(args: {
             inputTokens: usage?.promptTokens ?? 0,
             outputTokens: usage?.completionTokens ?? 0,
           },
-          costCents: estimateCostCents(def.model, usage),
+          costCents: estimateCostCents(modelChoice, usage),
         };
       },
     );
@@ -135,9 +175,9 @@ export async function runAgent<TInput, TOutput>(args: {
     const requiresApproval = decideRequiresApproval({
       agentSays: out.requiresHumanApproval,
       confidence: out.confidence,
-      confidenceThreshold: def.confidenceThreshold,
+      confidenceThreshold: effectiveConfidenceThreshold,
       riskLevel: out.riskLevel as RiskLevel,
-      maxRiskLevel: def.maxRiskLevel,
+      maxRiskLevel: effectiveMaxRiskLevel,
     });
 
     // 11. Update AgentRun with results
@@ -175,7 +215,7 @@ export async function runAgent<TInput, TOutput>(args: {
       agentRunId,
       metadata: {
         agentName: def.name,
-        agentVersion: def.version,
+        agentVersion: effectiveVersion,
         confidence: out.confidence,
         riskLevel: out.riskLevel,
         requiresApproval,
@@ -226,6 +266,40 @@ function decideRequiresApproval(args: {
     return true;
   if (args.riskLevel === "HIGH" || args.riskLevel === "CRITICAL") return true;
   return false;
+}
+
+/**
+ * Loads operator overrides + knowledge for this agent. Each lookup is
+ * non-fatal — if the personalization tables are missing or a query fails we
+ * fall back to in-code defaults so a fresh DB never bricks agent runs.
+ */
+async function loadOverrides(agentName: string) {
+  const fallback = agentSettingsService.toOverrides(null);
+  let overrides = fallback;
+  try {
+    const row = await agentSettingsService.get(agentName);
+    overrides = agentSettingsService.toOverrides(row);
+  } catch (err) {
+    logger.warn({ err, agentName }, "agent_settings lookup failed");
+  }
+
+  let orgProfile: Awaited<
+    ReturnType<typeof orgProfileService.getOrCreate>
+  > | null = null;
+  try {
+    orgProfile = await orgProfileService.getOrCreate();
+  } catch (err) {
+    logger.warn({ err, agentName }, "org_profile lookup failed");
+  }
+
+  let knowledge: Awaited<ReturnType<typeof knowledgeService.listForAgent>> = [];
+  try {
+    knowledge = await knowledgeService.listForAgent(agentName);
+  } catch (err) {
+    logger.warn({ err, agentName }, "knowledge lookup failed");
+  }
+
+  return { ...overrides, orgProfile, knowledge };
 }
 
 /** Rough cost estimate in cents. Real numbers vary by model; tighten later. */

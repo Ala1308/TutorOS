@@ -31,6 +31,19 @@ export const rlsPolicies = {
     ALTER TABLE drive_files ENABLE ROW LEVEL SECURITY;
     ALTER TABLE email_threads ENABLE ROW LEVEL SECURITY;
     ALTER TABLE google_tokens ENABLE ROW LEVEL SECURITY;
+    -- Personalization
+    ALTER TABLE org_profile ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE agent_settings ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE agent_knowledge_documents ENABLE ROW LEVEL SECURITY;
+    -- Academics
+    ALTER TABLE assessments ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE homework ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE learning_plans ENABLE ROW LEVEL SECURITY;
+    -- Billing
+    ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE invoice_line_items ENABLE ROW LEVEL SECURITY;
+    -- Communications
+    ALTER TABLE call_records ENABLE ROW LEVEL SECURITY;
   `,
 
   /** OWNER and ADMIN see everything. */

@@ -1,23 +1,85 @@
+import { google } from "googleapis";
+import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 
-import { handleApiError } from "@/lib/utils/errors";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
+import { env, integrations } from "@/lib/env";
+import { verifyOAuthState } from "@/lib/google/oauthState";
+import { googleTokenService } from "@/lib/services/googleTokenService";
+import { AppError } from "@/lib/utils/errors";
+import { logger } from "@/lib/logger";
 
 /**
- * Google OAuth callback. Wire fully when authentication is implemented:
- *   1. Validate `state` against the user session.
- *   2. Exchange `code` for tokens via google.auth.OAuth2.getToken.
- *   3. Encrypt tokens with TOKEN_ENCRYPTION_KEY (lib/google/crypto.ts).
- *   4. Upsert google_tokens row for the current user.
- *   5. Audit and redirect.
+ * Google OAuth callback — exchanges `code` for tokens, encrypts at rest,
+ * upserts `google_tokens`, audits, redirects back to settings.
  */
 export async function GET(req: NextRequest) {
-  try {
-    const url = new URL(req.url);
-    const _code = url.searchParams.get("code");
-    const _state = url.searchParams.get("state");
+  const base = env.NEXT_PUBLIC_APP_URL;
+  const settingsUrl = new URL("/settings/integrations/google", base);
 
-    return NextResponse.redirect(new URL("/settings", url.origin));
+  try {
+    if (!integrations.hasGoogleOAuth()) {
+      settingsUrl.searchParams.set("error", "google_not_configured");
+      return NextResponse.redirect(settingsUrl);
+    }
+
+    const url = new URL(req.url);
+    const oauthError = url.searchParams.get("error");
+    if (oauthError) {
+      settingsUrl.searchParams.set("error", oauthError);
+      return NextResponse.redirect(settingsUrl);
+    }
+
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const verified = verifyOAuthState(state, env.TOKEN_ENCRYPTION_KEY!);
+
+    if (!code || !verified) {
+      settingsUrl.searchParams.set("error", "invalid_oauth");
+      return NextResponse.redirect(settingsUrl);
+    }
+
+    const oauth2 = new google.auth.OAuth2(
+      env.GOOGLE_CLIENT_ID,
+      env.GOOGLE_CLIENT_SECRET,
+      env.GOOGLE_REDIRECT_URI,
+    );
+
+    const { tokens } = await oauth2.getToken(code);
+
+    const [userRow] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, verified.userId))
+      .limit(1);
+
+    if (!userRow) {
+      logger.warn(
+        { userId: verified.userId },
+        "OAuth state referenced unknown users row",
+      );
+      settingsUrl.searchParams.set("error", "user_not_found");
+      return NextResponse.redirect(settingsUrl);
+    }
+
+    await googleTokenService.upsertFromCredentials({
+      userId: verified.userId,
+      credentials: tokens,
+      actor: {
+        type: "USER",
+        id: userRow.id,
+        role: userRow.role,
+        email: userRow.email,
+      },
+    });
+
+    settingsUrl.searchParams.set("connected", "1");
+    return NextResponse.redirect(settingsUrl);
   } catch (err) {
-    return handleApiError(err);
+    logger.warn({ err }, "Google OAuth callback failed");
+    const msg = err instanceof AppError ? err.message : "oauth_callback_failed";
+    settingsUrl.searchParams.set("error", msg.slice(0, 200));
+    return NextResponse.redirect(settingsUrl);
   }
 }

@@ -20,7 +20,7 @@ export const eventSchemas = {
   "assessment.submitted": { data: z.object({ assessmentId: z.string() }) },
   "session.scheduled": { data: z.object({ sessionId: z.string() }) },
   "session.completed": { data: z.object({ sessionId: z.string() }) },
-  "session.transcriptImported": { data: z.object({ sessionId: z.string() }) },
+  "session.transcript_imported": { data: z.object({ sessionId: z.string() }) },
   "approval.approved": { data: z.object({ approvalId: z.string().uuid() }) },
   "approval.rejected": { data: z.object({ approvalId: z.string().uuid() }) },
   "approval.changes_requested": {

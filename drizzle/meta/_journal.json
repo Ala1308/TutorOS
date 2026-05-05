@@ -8,6 +8,34 @@
       "when": 1777580369160,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777863809926,
+      "tag": "0001_unique_kate_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777875564050,
+      "tag": "0002_absurd_power_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777908015317,
+      "tag": "0003_premium_triathlon",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777909584512,
+      "tag": "0004_late_namora",
+      "breakpoints": true
     }
   ]
 }

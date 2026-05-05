@@ -57,13 +57,25 @@ export const WORKFLOW_STEPS = {
     draft: "payout.draft",
     finalize: "payout.finalize",
   },
+  drive: {
+    createFolder: "drive.createFolder",
+    uploadFile: "drive.uploadFile",
+  },
+  comm: {
+    logEmail: "comm.logEmail",
+    logCall: "comm.logCall",
+  },
 } as const;
 
 /**
  * Steps that are too risky to auto-execute. Setting FULL_AUTO on these
- * is rejected by `setAutomationMode`.
+ * is rejected by `setMode` and the option is hidden in the UI.
+ *
+ * Exported (read-only) so the UI can disable the FULL_AUTO option for
+ * these steps instead of letting users discover the rule by getting an
+ * error after submit.
  */
-const HIGH_RISK_STEPS = new Set<string>([
+export const HIGH_RISK_STEPS: ReadonlySet<string> = new Set<string>([
   WORKFLOW_STEPS.lead.acknowledgmentEmail,
   WORKFLOW_STEPS.assessment.sendToStudent,
   WORKFLOW_STEPS.learningPlan.activation,
@@ -74,7 +86,18 @@ const HIGH_RISK_STEPS = new Set<string>([
   WORKFLOW_STEPS.payout.finalize,
 ]);
 
-const DEFAULT_MODE: AutomationLevel = "DRAFT_ONLY";
+export function isHighRiskStep(step: string): boolean {
+  return HIGH_RISK_STEPS.has(step);
+}
+
+export const AUTOMATION_MODES = [
+  "MANUAL",
+  "DRAFT_ONLY",
+  "AUTO_AFTER_APPROVAL",
+  "FULL_AUTO",
+] as const satisfies ReadonlyArray<AutomationLevel>;
+
+export const DEFAULT_AUTOMATION_MODE: AutomationLevel = "DRAFT_ONLY";
 
 export const automationService = {
   /** Returns the user's mode for a step, or the global default. */
@@ -92,7 +115,24 @@ export const automationService = {
         ),
       )
       .limit(1);
-    return (row?.mode as AutomationLevel) ?? DEFAULT_MODE;
+    return (row?.mode as AutomationLevel) ?? DEFAULT_AUTOMATION_MODE;
+  },
+
+  /**
+   * Returns a Map<step, mode> for every step the user has explicitly set.
+   * Cheaper than calling getMode() once per workflow step on a settings page.
+   */
+  async getAllForUser(userId: string): Promise<Map<string, AutomationLevel>> {
+    const rows = await db
+      .select({
+        workflowStep: automationPreferences.workflowStep,
+        mode: automationPreferences.mode,
+      })
+      .from(automationPreferences)
+      .where(eq(automationPreferences.userId, userId));
+    const m = new Map<string, AutomationLevel>();
+    for (const r of rows) m.set(r.workflowStep, r.mode as AutomationLevel);
+    return m;
   },
 
   async setMode(args: {

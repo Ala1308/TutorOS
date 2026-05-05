@@ -14,6 +14,7 @@ const defaults: Record<string, string> = {
   AGENT_BUDGET_DAILY_USD: "10",
   AGENT_BUDGET_PER_RUN_USD: "1",
   AGENT_DEFAULT_TIMEOUT_MS: "30000",
+  VOICE_MOCK_WEBHOOK_SECRET: "vitest-mock-voice-webhook-secret",
 };
 
 for (const [k, v] of Object.entries(defaults)) {

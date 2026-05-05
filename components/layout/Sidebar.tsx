@@ -1,17 +1,26 @@
 import Link from "next/link";
+
+import { UserMenu } from "./UserMenu";
 import {
+  BookOpen,
+  Bot,
+  Building2,
   CheckCircle2,
+  ClipboardCheck,
   ClipboardList,
+  Cloud,
   FileText,
   GraduationCap,
   Home,
   Inbox,
+  Library,
+  MessageSquare,
+  Notebook,
+  Receipt,
   ScrollText,
   Settings,
   Users,
 } from "lucide-react";
-
-import { UserMenu } from "./UserMenu";
 import { cn } from "@/lib/utils/cn";
 
 interface SidebarItem {
@@ -27,10 +36,35 @@ const ITEMS: ReadonlyArray<SidebarItem> = [
   { href: "/students", label: "Students", icon: GraduationCap },
   { href: "/tutors", label: "Tutors", icon: Users },
   { href: "/sessions", label: "Sessions", icon: ClipboardList },
+  {
+    href: "/academics/assessments",
+    label: "Assessments",
+    icon: ClipboardCheck,
+  },
+  { href: "/academics/homework", label: "Homework", icon: Notebook },
+  {
+    href: "/academics/learning-plans",
+    label: "Learning plans",
+    icon: BookOpen,
+  },
+  { href: "/invoices", label: "Invoices", icon: Receipt },
+  {
+    href: "/communications",
+    label: "Communications",
+    icon: MessageSquare,
+  },
   { href: "/approvals", label: "Approvals", icon: CheckCircle2 },
   { href: "/agent-runs", label: "Agent runs", icon: FileText },
   { href: "/audit-log", label: "Audit log", icon: ScrollText },
   { href: "/automation-settings", label: "Automation", icon: Settings },
+  { href: "/settings/organization", label: "Organization", icon: Building2 },
+  { href: "/settings/agents", label: "Agents", icon: Bot },
+  { href: "/settings/knowledge", label: "Knowledge", icon: Library },
+  {
+    href: "/settings/integrations/google",
+    label: "Google",
+    icon: Cloud,
+  },
 ];
 
 export function Sidebar({ active }: { active?: string }) {

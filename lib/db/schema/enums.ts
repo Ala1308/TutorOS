@@ -91,3 +91,46 @@ export const tutorStatusEnum = pgEnum("tutor_status", [
   "INACTIVE",
   "REJECTED",
 ]);
+
+export const assessmentTypeEnum = pgEnum("assessment_type", [
+  "DIAGNOSTIC",
+  "PROGRESS",
+  "FINAL",
+  "OTHER",
+]);
+
+export const homeworkStatusEnum = pgEnum("homework_status", [
+  "ASSIGNED",
+  "SUBMITTED",
+  "REVIEWED",
+  "COMPLETED",
+  "MISSED",
+]);
+
+export const learningPlanStatusEnum = pgEnum("learning_plan_status", [
+  "DRAFT",
+  "ACTIVE",
+  "COMPLETED",
+  "ARCHIVED",
+]);
+
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "DRAFT",
+  "SENT",
+  "PAID",
+  "OVERDUE",
+  "VOID",
+]);
+
+export const commDirectionEnum = pgEnum("comm_direction", [
+  "INBOUND",
+  "OUTBOUND",
+]);
+
+export const callOutcomeEnum = pgEnum("call_outcome", [
+  "ANSWERED",
+  "VOICEMAIL",
+  "NO_ANSWER",
+  "BUSY",
+  "FAILED",
+]);

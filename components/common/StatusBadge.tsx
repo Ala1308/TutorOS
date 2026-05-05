@@ -65,6 +65,22 @@ const STATUS_VARIANT: Record<string, Variant> = {
   INTERVIEW: "info",
   ACTIVE: "success",
   INACTIVE: "outline",
+  // Homework
+  ASSIGNED: "info",
+  SUBMITTED: "warning",
+  REVIEWED: "success",
+  MISSED: "destructive",
+  // Learning plans / assessments
+  DRAFT: "secondary",
+  DIAGNOSTIC: "info",
+  PROGRESS: "info",
+  FINAL: "success",
+  OTHER: "secondary",
+  // Invoices
+  SENT: "info",
+  PAID: "success",
+  OVERDUE: "destructive",
+  VOID: "outline",
 };
 
 export function StatusBadge({ status }: { status: string }) {

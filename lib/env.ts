@@ -15,6 +15,7 @@ const optional = (s: z.ZodString = z.string()) =>
 
 const voiceProviderSchema = z.enum([
   "none",
+  "mock",
   "vapi",
   "elevenlabs",
   "bland",
@@ -60,6 +61,8 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: optional(),
   GOOGLE_REDIRECT_URI: optional(z.string().url()),
   TOKEN_ENCRYPTION_KEY: optional(),
+  /** Optional Drive folder id — new folders default under this parent instead of My Drive root. */
+  GOOGLE_DRIVE_DEFAULT_PARENT_FOLDER_ID: optional(),
 
   // Email (Resend) — optional. When unset, sendEmail() no-ops gracefully.
   RESEND_API_KEY: optional(),
@@ -67,6 +70,8 @@ const envSchema = z.object({
 
   // Voice
   VOICE_PROVIDER: voiceProviderSchema.default("none"),
+  /** Required for `VOICE_PROVIDER=mock` webhooks (`x-signature` must match). */
+  VOICE_MOCK_WEBHOOK_SECRET: optional(),
   VAPI_API_KEY: optional(),
   ELEVENLABS_API_KEY: optional(),
   BLAND_API_KEY: optional(),
@@ -106,8 +111,14 @@ export const integrations = {
     ),
   hasLangfuse: () =>
     Boolean(env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY),
+  /** OAuth install + encrypted token storage — all four required to link. */
   hasGoogleOAuth: () =>
-    Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+    Boolean(
+      env.GOOGLE_CLIENT_ID &&
+      env.GOOGLE_CLIENT_SECRET &&
+      env.GOOGLE_REDIRECT_URI &&
+      env.TOKEN_ENCRYPTION_KEY,
+    ),
   hasInngest: () => Boolean(env.INNGEST_EVENT_KEY && env.INNGEST_SIGNING_KEY),
   hasSupabase: () => Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
   hasResend: () => Boolean(env.RESEND_API_KEY && env.RESEND_FROM_EMAIL),

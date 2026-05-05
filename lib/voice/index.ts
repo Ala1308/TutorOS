@@ -1,5 +1,6 @@
 import { env } from "@/lib/env";
 
+import { mockVoiceAdapter } from "./mock";
 import { noneAdapter } from "./none";
 
 import type { VoiceProviderAdapter } from "./types";
@@ -15,6 +16,8 @@ export function getVoiceProvider(): VoiceProviderAdapter {
   switch (env.VOICE_PROVIDER) {
     case "none":
       return noneAdapter;
+    case "mock":
+      return mockVoiceAdapter;
     case "vapi":
     case "elevenlabs":
     case "bland":

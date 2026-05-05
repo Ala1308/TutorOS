@@ -63,7 +63,27 @@ describe("permissions matrix", () => {
     expect(can(AGENT, "lead.score")).toBe(true);
     expect(can(AGENT, "approval.resolve")).toBe(false);
     expect(can(AGENT, "automation.update")).toBe(false);
+    expect(can(AGENT, "integration.google.link")).toBe(false);
     expect(can(AGENT, "lead.delete")).toBe(false);
+  });
+
+  it("AGENT cannot delete or write personalization", () => {
+    expect(can(AGENT, "parent.delete")).toBe(false);
+    expect(can(AGENT, "student.delete")).toBe(false);
+    expect(can(AGENT, "tutor.delete")).toBe(false);
+    expect(can(AGENT, "agent.settings.write")).toBe(false);
+    expect(can(AGENT, "knowledge.write")).toBe(false);
+    expect(can(AGENT, "org.profile.write")).toBe(false);
+  });
+
+  it("ACADEMIC_MANAGER can manage people but not delete them", () => {
+    const a = user("ACADEMIC_MANAGER");
+    expect(can(a, "parent.create")).toBe(true);
+    expect(can(a, "parent.update")).toBe(true);
+    expect(can(a, "parent.delete")).toBe(false);
+    expect(can(a, "tutor.create")).toBe(true);
+    expect(can(a, "tutor.delete")).toBe(false);
+    expect(can(a, "tutor.status.update")).toBe(true);
   });
 });
 

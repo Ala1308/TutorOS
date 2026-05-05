@@ -21,3 +21,15 @@ export * from "./consents";
 export * from "./driveFiles";
 export * from "./emailThreads";
 export * from "./googleTokens";
+
+export * from "./orgProfile";
+export * from "./agentSettings";
+export * from "./agentKnowledge";
+
+export * from "./assessments";
+export * from "./homework";
+export * from "./learningPlans";
+
+export * from "./invoices";
+
+export * from "./callRecords";

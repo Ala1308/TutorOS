@@ -60,7 +60,8 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/approvals") ||
     path.startsWith("/agent-runs") ||
     path.startsWith("/audit-log") ||
-    path.startsWith("/automation-settings");
+    path.startsWith("/automation-settings") ||
+    path.startsWith("/settings");
 
   if (isProtected && !user) {
     const signInUrl = request.nextUrl.clone();

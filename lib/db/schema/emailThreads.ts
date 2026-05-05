@@ -1,10 +1,11 @@
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { idCol, timestamps } from "./_helpers";
+import { commDirectionEnum } from "./enums";
 
 /**
- * Every Gmail send / thread we know about. Bulk sends are forbidden — one
- * thread per outbound message context.
+ * Every Gmail thread / manually-logged email we know about. Bulk sends are
+ * forbidden — one thread per outbound message context.
  */
 export const emailThreads = pgTable(
   "email_threads",
@@ -18,12 +19,15 @@ export const emailThreads = pgTable(
     bccEmails: jsonb("bcc_emails").$type<string[]>().default([]),
     entityType: text("entity_type"),
     entityId: text("entity_id"),
+    direction: commDirectionEnum("direction").notNull().default("OUTBOUND"),
+    bodyPreview: text("body_preview"),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     ...timestamps(),
   },
   (t) => ({
     entityIdx: index("email_threads_entity_idx").on(t.entityType, t.entityId),
     gmailIdx: index("email_threads_gmail_idx").on(t.gmailThreadId),
+    directionIdx: index("email_threads_direction_idx").on(t.direction),
   }),
 );
 

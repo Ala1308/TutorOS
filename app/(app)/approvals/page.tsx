@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 
-import { ApprovalCard } from "@/components/agents/ApprovalCard";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { approvalService } from "@/lib/services/approvalService";
+
+import { ApprovalCardActions } from "./ApprovalCardActions";
 
 export const metadata: Metadata = { title: "Approvals" };
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export default async function ApprovalsPage() {
             description="When agents propose external actions, they show up here."
           />
         ) : (
-          pending.map((a) => <ApprovalCard key={a.id} approval={a} />)
+          pending.map((a) => <ApprovalCardActions key={a.id} approval={a} />)
         )}
       </div>
     </>
